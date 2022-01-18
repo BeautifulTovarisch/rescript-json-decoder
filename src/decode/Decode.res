@@ -20,12 +20,12 @@
 module type Model = {
   /* [t] is the type representing the data model */
   type t
+
+  /* [empty] is the model of type [t] with default values */
+  let empty : t
 }
 
 module type S = {
-  /* [values] is the type representing the decoded values of the inputs */
-  type values
-
   /* [model] is the data model produced after decoding is complete */
   type model
 
@@ -36,14 +36,14 @@ module type S = {
    Raises: (failure) if [s] is unable to be parsed */
   let parse: string => t<'a>
 
-  /* [decodeNum t s] is the decoder produced by decoding key [s] in [t] */
-  let decodeNum: (t<'a>, string) => t<'a>
+  /* [decodeNum t s] is the decoder produced by decoding number [s] in [t] */
+  let decodeNum: (t<'a>, string, (model, float) => model) => t<'a>
 
-  /* [getValue vs k d] is Some(vs[k]) if [k] is in [vs] or None otherwise */
-  let getNum: (values, string) => float
+  /* [decodeBool t s] is the decoder produced by decoding boolean [s] in [t] */
+  let decodeBool: (t<'a>, string, (model, bool) => model) => t<'a>
 
   /* [done t] is some effectful action upon the decoder peformed after decoding is finished */
-  let done: (t<'a>, (values, string) => model) => model
+  let done: (t<'a>, (model, string) => model) => model
 }
 
 module MakeJSONDecoder = (M: Model): (S with type model = M.t) => {
@@ -51,9 +51,12 @@ module MakeJSONDecoder = (M: Model): (S with type model = M.t) => {
   open Js.Json
 
   type model = M.t
-  type values = Js.Dict.t<Js.Json.t>
 
-  type t<'a> = (values, list<string>)
+  type t<'a> = (Js.Dict.t<Js.Json.t>, model, list<string>)
+
+  let wrongType = (k, t) => `${k} is not of type ${t}.`
+
+  let notFound = k => `Key: ${k} not found.`
 
   let parse = json => {
     let parsed = try Js.Json.parseExn(json) catch {
@@ -61,60 +64,74 @@ module MakeJSONDecoder = (M: Model): (S with type model = M.t) => {
     }
 
     switch classify(parsed) {
-    | JSONObject(obj) => (obj, list{})
+    | JSONObject(obj) => (obj, M.empty, list{})
     | _ => failwith(`Invalid Object: ${json}`)
     }
   }
 
+  let getKey = (json, key) =>
+    switch Js.Dict.get(json, key) {
+    | Some(val) => Ok(val)
+    | None => notFound(key)->Error
+    }
+
+  // Boolean values
+  let classifyBool = (r, key) =>
+    Result.flatMap(r, x =>
+      switch classify(x) {
+      | JSONTrue => Ok(true)
+      | JSONFalse => Ok(false)
+      | _ => wrongType(key, "boolean")->Error
+      }
+    )
+
+
+  let decodeBool = ((json, obj, errors), key, fn) =>
+    switch getKey(json, key)->classifyBool(key) {
+    | Ok(b) => (json, fn(obj, b), errors)
+    | Error(e) => (json, obj, list{e, ...errors})
+    }
+
+  // Numeric values
   let classifyNum = (r, key) =>
     Result.flatMap(r, x =>
       switch classify(x) {
       | JSONNumber(num) => Ok(num)
-      | _ => Error(`'${key}' is not a number`)
+      | _ => wrongType(key, "number")->Error
       }
     )
 
-  let getKey = (json, key) =>
-    switch Js.Dict.get(json, key) {
-    | Some(val) => Ok(val)
-    | None => Error(`Key: ${key} not found.`)
-    }
-
-  let decodeNum = ((json, errors), key) =>
+  let decodeNum = ((json, obj, errors), key, fn) =>
     switch getKey(json, key)->classifyNum(key) {
-    | Ok(_) => (json, errors)
-    | Error(e) => (json, list{e, ...errors})
-    }
-
-  let getNum = (json, key) =>
-    switch getKey(json, key)->classifyNum(key) {
-    | Ok(num) => num
-    | Error(_) => 0.
+    | Ok(num) => (json, fn(obj, num), errors)
+    | Error(e) => (json, obj, list{e, ...errors})
     }
 
   let formatErrors = errs =>
     List.reduce(errs, "", (acc, err) => {`[E] ${err}\n${acc}`})->String.trim
 
-  let done = ((vals, errors), fn) => fn(vals, errors->formatErrors)
+  let done = ((_, obj, errors), fn) => fn(obj, errors->formatErrors)
 }
 
 // Client Code
 module DataModel = {
-  type t = {a: float}
+  type t = {a: float, b: bool}
+  let empty = {a: 0., b: false}
 }
 
 module DataModelDecoder = MakeJSONDecoder(DataModel)
 
 let () = {
   open DataModelDecoder
+
   let _ =
     parse(`{"a": 1}`)
-    ->decodeNum("a")
-    ->decodeNum("b")
-    ->decodeNum("c")
-    ->done((vals, errors) => {
+    ->decodeNum("a", (obj, val) => {...obj, a: val })
+    ->decodeBool("b", (obj, val) => {...obj, b: val })
+    ->done((obj, errors) => {
       Js.log(errors)
 
-      {a: getNum(vals, "b")}
+      Js.log(obj)
+      obj
     })
 }
