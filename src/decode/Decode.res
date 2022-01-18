@@ -36,11 +36,14 @@ module type S = {
    Raises: (failure) if [s] is unable to be parsed */
   let parse: string => t<'a>
 
-  /* [decodeNum t s] is the decoder produced by decoding number [s] in [t] */
+  /* [decodeNum t s f] is the decoder produced by decoding number [s] in [t] */
   let decodeNum: (t<'a>, string, (model, float) => model) => t<'a>
 
-  /* [decodeBool t s] is the decoder produced by decoding boolean [s] in [t] */
+  /* [decodeBool t s f] is the decoder produced by decoding boolean [s] in [t] */
   let decodeBool: (t<'a>, string, (model, bool) => model) => t<'a>
+
+  /* [decodeStr t s f] is the decoder produced by decoding string [s] in [t] */
+  let decodeStr: (t<'a>, string, (model, string) => model) => t<'a>
 
   /* [done t] is some effectful action upon the decoder peformed after decoding is finished */
   let done: (t<'a>, (model, string) => model) => model
@@ -85,7 +88,6 @@ module MakeJSONDecoder = (M: Model): (S with type model = M.t) => {
       }
     )
 
-
   let decodeBool = ((json, obj, errors), key, fn) =>
     switch getKey(json, key)->classifyBool(key) {
     | Ok(b) => (json, fn(obj, b), errors)
@@ -107,6 +109,21 @@ module MakeJSONDecoder = (M: Model): (S with type model = M.t) => {
     | Error(e) => (json, obj, list{e, ...errors})
     }
 
+  let classifyString = (r, key) =>
+      Result.flatMap(r, str =>
+        switch classify(str) {
+          | JSONString(str) => Ok(str)
+          | _ => wrongType(key, "string")->Error
+        }
+       )
+
+  // String values
+  let decodeStr = ((json, obj, errors), key, fn) =>
+      switch getKey(json, key)->classifyString(key) {
+          | Ok(str) => (json, fn(obj, str), errors)
+          | Error(e) => (json, obj, list{e, ...errors})
+      }
+
   let formatErrors = errs =>
     List.reduce(errs, "", (acc, err) => {`[E] ${err}\n${acc}`})->String.trim
 
@@ -115,8 +132,8 @@ module MakeJSONDecoder = (M: Model): (S with type model = M.t) => {
 
 // Client Code
 module DataModel = {
-  type t = {a: float, b: bool}
-  let empty = {a: 0., b: false}
+  type t = {a: float, b: bool, c: float}
+  let empty = {a: 0., b: false, c: 0.}
 }
 
 module DataModelDecoder = MakeJSONDecoder(DataModel)
@@ -125,13 +142,15 @@ let () = {
   open DataModelDecoder
 
   let _ =
-    parse(`{"a": 1}`)
+    parse(`{"a": "hi", "b": false, "c": 1}`)
     ->decodeNum("a", (obj, val) => {...obj, a: val })
     ->decodeBool("b", (obj, val) => {...obj, b: val })
+    ->decodeNum("c", (obj, val) => {...obj, c: val})
     ->done((obj, errors) => {
       Js.log(errors)
 
       Js.log(obj)
+
       obj
     })
 }
