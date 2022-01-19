@@ -11,28 +11,33 @@ module type S = {
   /* [model] is the data model produced after decoding is complete */
   type model
 
-  /* [type t] is the type of decoder [t] represented by type ['a] */
-  type t
+  /* [type t<'a>] is the type of decoder [t] represented by type ['a] */
+  type t<'a>
 
   /* [parse s] is the decoder produced by parsing [s].
    Raises: (failure) if [s] is unable to be parsed */
-  let parse: string => t
+  let parse: string => t<'a>
 
   /* [decodeNum t s f] is the decoder produced by decoding number [s] in [t] and
      by application of [f] on the model and a [float]. */
-  let decodeNum: (t, string, (model, float) => model) => t
+  let decodeNum: (t<'a>, string, (model, float) => model) => t<'a>
 
   /* [decodeBool t s f] is the decoder produced by decoding boolean [s] in [t]
      and by application of [f] on the model and a [bool]. */
-  let decodeBool: (t, string, (model, bool) => model) => t
+  let decodeBool: (t<'a>, string, (model, bool) => model) => t<'a>
 
   /* [decodeStr t s f] is the decoder produced by decoding string [s] in [t].
      and by application of [f] on the model and a [string]. */
-  let decodeStr: (t, string, (model, string) => model) => t
+  let decodeStr: (t<'a>, string, (model, string) => model) => t<'a>
+
+  /* [decodeObj t s f] is the decoder produced by decoding object [s] in [t].
+     Attributes of the object must be decoded using the other primitive
+     decoding functions. */
+  let decodeObj: (t<'a>, string, t<'a> => t<'a>) => t<'a>
 
   /* [done t] is some effectful action upon the decoder peformed after decoding
      is finished */
-  let done: (t, (string) => ()) => model
+  let done: (t<'a>, (string) => ()) => model
 }
 
 module Make = (M: Model): (S with type model = M.t) => {
@@ -40,8 +45,9 @@ module Make = (M: Model): (S with type model = M.t) => {
   open Js.Json
 
   type model = M.t
+  type values = Js.Dict.t<Js.Json.t>
 
-  type t = (Js.Dict.t<Js.Json.t>, model, list<string>)
+  type t<'a> = (values, model, list<string>)
 
   // Error constructors
   let wrongType = (k) => Error(`${k} is not of the expected type.`)
@@ -74,40 +80,37 @@ module Make = (M: Model): (S with type model = M.t) => {
   }
 
   // Boolean values
-  let decodeBool = ((json, obj, errors), key, fn) =>
+  let decodeBool = ((json, data, errors), key, fn) =>
     switch getKey(json, key)->decode(key, decodeBoolean) {
-    | Ok(b) => (json, fn(obj, b), errors)
-    | Error(e) => (json, obj, list{e, ...errors})
+    | Ok(b) => (json, fn(data, b), errors)
+    | Error(e) => (json, data, list{e, ...errors})
     }
 
   // Numeric values
-  let decodeNum = ((json, obj, errors), key, fn) =>
+  let decodeNum = ((json, data, errors), key, fn) =>
     switch getKey(json, key)->decode(key, decodeNumber) {
-    | Ok(num) => (json, fn(obj, num), errors)
-    | Error(e) => (json, obj, list{e, ...errors})
+    | Ok(num) => (json, fn(data, num), errors)
+    | Error(e) => (json, data, list{e, ...errors})
     }
 
   // String values
-  let decodeStr = ((json, obj, errors), key, fn) =>
+  let decodeStr = ((json, data, errors), key, fn) =>
       switch getKey(json, key)->decode(key, decodeString) {
-          | Ok(str) => (json, fn(obj, str), errors)
-          | Error(e) => (json, obj, list{e, ...errors})
+          | Ok(str) => (json, fn(data, str), errors)
+          | Error(e) => (json, data, list{e, ...errors})
       }
 
-  // Array values
-  // let classifyArry = (r, key) =>
-  //     Result.flatMap(r, arr =>
-  //       switch classify(arr) {
-  //           | JSONArray(arr) => Ok(arr)
-  //           | _ => wrongType(key, "array")
-  //       }
-  //     )
+  let decodeObj = ((json, data, errors), key, fn) => {
+    switch getKey(json, key)->decode(key, decodeObject) {
+      | Ok(dict) => {
+        // Create a new decoder pipeline using the values contained within the object
+        let (_, newData, newErrors) = fn((dict, data, errors))
 
-  // let decodeArry = ((json, obj, errors), key, fn) =>
-  //     switch getKey(json, key)->classifyArry(key) {
-  //         | Ok(arry) => (json, fn(obj, arry), errors)
-  //         | Error(e) => (json, obj, list{e, ...errors})
-  //     }
+        (json, newData, List.concat(newErrors, errors))
+      }
+      | Error(e) => (json, data, list{e, ...errors})
+    }
+  }
 
   let formatErrors = errs =>
     List.reduce(errs, "", (acc, err) => {`[E] ${err}\n${acc}`})->String.trim
@@ -120,8 +123,25 @@ module Make = (M: Model): (S with type model = M.t) => {
 
 // Client Code
 module DataModel = {
-  type t = {a: float, b: bool, c: float}
-  let empty = {a: 0., b: false, c: 0.}
+  type nested = {
+    e: float
+  }
+
+  type t = {
+    a: float,
+    b: bool,
+    c: float,
+    d: nested
+  }
+
+  let empty = {
+    a: 0.,
+    b: false,
+    c: 0.,
+    d: {
+      e: 0.
+    }
+  }
 }
 
 module DataModelDecoder = Make(DataModel)
@@ -130,10 +150,13 @@ let () = {
   open DataModelDecoder
 
   let x =
-    parse(`{"a": "hi", "b": false, "c": 1}`)
+    parse(`{"a": "hi", "b": false, "c": 1, "d": { "e": 12 } }`)
     ->decodeNum("a", (obj, val) => {...obj, a: val })
     ->decodeBool("b", (obj, val) => {...obj, b: val })
-    ->decodeNum("c", (obj, val) => {...obj, c: val})
+    ->decodeNum("c", (obj, val) => {...obj, c: val, d: { e: 0. }})
+    ->decodeObj("d", m => {
+        decodeNum(m, "e", (obj, val) => {...obj, d: { e: val } })
+    })
     ->done(Js.log)
 
   Js.log(x)
