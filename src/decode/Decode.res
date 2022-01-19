@@ -11,28 +11,28 @@ module type S = {
   /* [model] is the data model produced after decoding is complete */
   type model
 
-  /* [type t<'a>] is the type of decoder [t] represented by type ['a] */
-  type t<'a>
+  /* [type t] is the type of decoder [t] represented by type ['a] */
+  type t
 
   /* [parse s] is the decoder produced by parsing [s].
    Raises: (failure) if [s] is unable to be parsed */
-  let parse: string => t<'a>
+  let parse: string => t
 
   /* [decodeNum t s f] is the decoder produced by decoding number [s] in [t] and
      by application of [f] on the model and a [float]. */
-  let decodeNum: (t<'a>, string, (model, float) => model) => t<'a>
+  let decodeNum: (t, string, (model, float) => model) => t
 
   /* [decodeBool t s f] is the decoder produced by decoding boolean [s] in [t]
      and by application of [f] on the model and a [bool]. */
-  let decodeBool: (t<'a>, string, (model, bool) => model) => t<'a>
+  let decodeBool: (t, string, (model, bool) => model) => t
 
   /* [decodeStr t s f] is the decoder produced by decoding string [s] in [t].
      and by application of [f] on the model and a [string]. */
-  let decodeStr: (t<'a>, string, (model, string) => model) => t<'a>
+  let decodeStr: (t, string, (model, string) => model) => t
 
   /* [done t] is some effectful action upon the decoder peformed after decoding
      is finished */
-  let done: (t<'a>, (string) => ()) => model
+  let done: (t, (string) => ()) => model
 }
 
 module Make = (M: Model): (S with type model = M.t) => {
@@ -41,7 +41,7 @@ module Make = (M: Model): (S with type model = M.t) => {
 
   type model = M.t
 
-  type t<'a> = (Js.Dict.t<Js.Json.t>, model, list<string>)
+  type t = (Js.Dict.t<Js.Json.t>, model, list<string>)
 
   // Error constructors
   let wrongType = (k) => Error(`${k} is not of the expected type.`)
