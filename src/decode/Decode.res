@@ -11,8 +11,14 @@ module type S = {
   /* [model] is the data model produced after decoding is complete */
   type model
 
+  /* [value] is the type of value decoded by the decoder */
+  type value
+
   /* [type t] is the type of decoder [t] represented by type ['a] */
   type t<'a>
+
+  /* [toBool v] is the boolean value returned by decoding [v] */
+  let toBool: value => bool
 
   /* [parse s] is the decoder produced by parsing [s].
    Raises: (failure) if [s] is unable to be parsed */
@@ -41,7 +47,7 @@ module type S = {
 
   /* [decodeArry t s f] is the decoder produced by decoding array [s] in [t].
    Elements of the array must be decoded. */
-  // let decodeArry: (t<'a>, string, t<'a> => 'b) => array<'b>
+  let decodeArry: (t<'a>, string, value => 'b) => array<'b>
 
   /* [done t] is some effectful action upon the decoder peformed after decoding
    is finished */
@@ -53,16 +59,29 @@ module Make = (M: Model): (S with type model = M.t) => {
   open Js.Json
 
   type model = M.t
+  type value = Js.Json.t
 
   type t<'a> = {
-    json: Js.Dict.t<Js.Json.t>,
+    json: Js.Dict.t<value>,
     model: M.t,
     mutable errors: array<string>,
   }
 
   // Error constructors
-  let wrongType = k => Error(`${k} is not of the expected type.`)
+  let wrongType = k => Error(`Key: ${k} is not of the expected type.`)
   let notFound = k => Error(`Key: ${k} not found.`)
+
+  let toBool = v =>
+    switch Js.Json.decodeBoolean(v) {
+    | Some(b) => b
+    | None => false
+    }
+
+  let toStr = v =>
+    switch Js.Json.decodeString(v) {
+    | Some(str) => str
+    | None => ""
+    }
 
   let parse = json => {
     let parsed = try Js.Json.parseExn(json) catch {
@@ -136,10 +155,13 @@ module Make = (M: Model): (S with type model = M.t) => {
     }
   }
 
-  let decodeArry = ((json, data, errors), key, fn, decoderFn) => {
-    switch getKey(json, key)->decodeVal(key, decodeArray) {
-    | Ok(arry) => (json, fn(data, arry), errors)
-    | Error(e) => (json, data, list{e, ...errors})
+  let decodeArry = (dec, key, decoderFn) => {
+    switch getKey(dec.json, key)->decodeVal(key, decodeArray) {
+    | Ok(arry) => Js.Array2.map(arry, decoderFn)
+    | Error(e) => {
+        pushError(dec.errors, e)
+        []
+      }
     }
   }
 
@@ -162,11 +184,14 @@ module Make = (M: Model): (S with type model = M.t) => {
 module DataModel = {
   type nested = {e: float}
 
+  type listF = array<bool>
+
   type t = {
     a: float,
     b: bool,
     c: float,
     d: nested,
+    f: listF,
   }
 
   let empty = {
@@ -174,6 +199,7 @@ module DataModel = {
     b: false,
     c: 0.,
     d: {e: 0.},
+    f: [],
   }
 }
 
@@ -189,6 +215,7 @@ let () = {
           "d": {
             "e": 12
           },
+          "f": [false, true, 13],
           "q": [1, 2, 3],
           "r": ["a", "b", "c"],
           "s": [{ "t": 1 }, {"t": 2 }]
@@ -200,6 +227,7 @@ let () = {
       d: {
         e: decodeObj(vals, "d")->decodeNum("e"),
       },
+      f: decodeArry(vals, "f", toBool),
     })
     ->done(errs => {
       Js.log(errs)
