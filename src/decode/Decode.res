@@ -20,6 +20,12 @@ module type S = {
   /* [toBool v] is the boolean value returned by decoding [v] */
   let toBool: value => bool
 
+  /* [toNum v] is the float value returned by decoding [v] */
+  let toNum: value => float
+
+  /* [toStr v] is the string value returned by decoding [v] */
+  let toStr: value => string
+
   /* [parse s] is the decoder produced by parsing [s].
    Raises: (failure) if [s] is unable to be parsed */
   let parse: string => t<'a>
@@ -82,6 +88,12 @@ module Make = (M: Model): (S with type model = M.t) => {
     | Some(str) => str
     | None => ""
     }
+
+  let toNum = v =>
+      switch Js.Json.decodeNumber(v) {
+          | Some(num) => num
+          | None => 0.
+      }
 
   let parse = json => {
     let parsed = try Js.Json.parseExn(json) catch {
@@ -185,6 +197,8 @@ module DataModel = {
   type nested = {e: float}
 
   type listF = array<bool>
+  type listG = array<float>
+  type listH = array<string>
 
   type t = {
     a: float,
@@ -192,6 +206,8 @@ module DataModel = {
     c: float,
     d: nested,
     f: listF,
+    g: listG,
+    h: listH
   }
 
   let empty = {
@@ -200,6 +216,8 @@ module DataModel = {
     c: 0.,
     d: {e: 0.},
     f: [],
+    g: [],
+    h: []
   }
 }
 
@@ -228,6 +246,8 @@ let () = {
         e: decodeObj(vals, "d")->decodeNum("e"),
       },
       f: decodeArry(vals, "f", toBool),
+      g: decodeArry(vals, "q", toNum),
+      h: decodeArry(vals, "r", toStr)
     })
     ->done(errs => {
       Js.log(errs)
